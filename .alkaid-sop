@@ -1,0 +1,7 @@
+# Alkaid-SOP Activation File
+# Project: GNSS Timing Simulation with Adaptive Array Antenna
+# Created: 2026-02-02
+# Version: 3.0
+
+PROJECT_TYPE=backend
+DOCKER_STANDARD=enabled
