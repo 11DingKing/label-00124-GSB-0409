@@ -59,11 +59,12 @@ async def run_simulation(request: SimulationRequest):
         - sweep: 线性扫频
         - pulse: 脉冲干扰
     - jnr_db: 干扰噪声比 (dB)
-    - algorithm: 自适应抗干扰算法
+    - algorithm: 抗干扰算法
         - mvdr: 最小方差无失真响应
         - lms: 最小均方
         - pi: 功率反演
         - lcmv: 线性约束最小方差
+        - rls: 递归最小二乘
     """
     try:
         # 执行仿真
@@ -124,6 +125,7 @@ async def run_simulation(request: SimulationRequest):
                 rms_timing_bias_ns=result["bias_analysis"]["rms_timing_bias_ns"],
                 satellite_biases=satellite_biases
             ),
+            algorithm_comparison=result.get("algorithm_comparison"),
             computation_time_ms=result["computation_time_ms"]
         )
         
@@ -179,6 +181,12 @@ async def list_algorithms():
                 "name": "LCMV",
                 "full_name": "Linearly Constrained Minimum Variance",
                 "description": "线性约束最小方差，支持多约束条件"
+            },
+            {
+                "id": "rls",
+                "name": "RLS",
+                "full_name": "Recursive Least Squares",
+                "description": "递归最小二乘，收敛比 LMS 更快，使用递归方法估计最优权重"
             }
         ]
     }
