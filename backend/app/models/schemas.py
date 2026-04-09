@@ -31,9 +31,9 @@ class SimulationRequest(BaseModel):
         le=60,
         description="干扰噪声比 (dB)"
     )
-    algorithm: Literal["mvdr", "lms", "pi", "lcmv"] = Field(
+    algorithm: Literal["mvdr", "lms", "pi", "lcmv", "rls"] = Field(
         default="mvdr",
-        description="抗干扰算法: mvdr, lms, pi, lcmv"
+        description="抗干扰算法: mvdr, lms, pi, lcmv, rls"
     )
     snr_db: float = Field(
         default=45.0,
@@ -98,6 +98,14 @@ class BiasResult(BaseModel):
     satellite_biases: List[SatelliteBias] = Field(description="各卫星偏差详情")
 
 
+class AlgorithmConvergence(BaseModel):
+    """算法收敛曲线"""
+    
+    algorithm: str = Field(description="算法名称")
+    convergence_curve: List[float] = Field(description="收敛曲线")
+    final_sinr_db: float = Field(description="最终信干噪比 (dB)")
+
+
 class BeamformingResult(BaseModel):
     """波束形成结果"""
     
@@ -107,6 +115,7 @@ class BeamformingResult(BaseModel):
     output_sinr_db: float = Field(description="输出信干噪比 (dB)")
     jammer_suppression_db: float = Field(description="干扰抑制量 (dB)")
     signal_distortion_db: float = Field(description="信号失真 (dB)")
+    convergence_curve: Optional[List[float]] = Field(None, description="收敛曲线(自适应算法)")
 
 
 class SimulationResponse(BaseModel):
@@ -133,6 +142,9 @@ class SimulationResponse(BaseModel):
     
     # 性能指标
     computation_time_ms: float = Field(description="计算耗时 (毫秒)")
+    
+    # 算法对比
+    algorithm_comparison: Optional[List[AlgorithmConvergence]] = Field(None, description="五种算法的收敛曲线对比")
 
 
 class HealthResponse(BaseModel):
