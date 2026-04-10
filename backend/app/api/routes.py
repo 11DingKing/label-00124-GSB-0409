@@ -15,7 +15,8 @@ from ..models import (
     BiasResult,
     HealthResponse,
     SatelliteBias,
-    BeamformingResult
+    BeamformingResult,
+    AlgorithmConvergence
 )
 from ..core import GNSSTimingSimulator
 
@@ -107,7 +108,8 @@ async def run_simulation(request: SimulationRequest):
                 weights_imag=result["beamforming"]["weights_imag"],
                 output_sinr_db=result["beamforming"]["output_sinr_db"],
                 jammer_suppression_db=result["beamforming"]["jammer_suppression_db"],
-                signal_distortion_db=result["beamforming"]["signal_distortion_db"]
+                signal_distortion_db=result["beamforming"]["signal_distortion_db"],
+                convergence_curve=result["beamforming"].get("convergence_curve")
             ),
             bias_analysis=BiasResult(
                 mean_code_phase_bias_chips=result["bias_analysis"]["mean_code_phase_bias_chips"],
@@ -124,7 +126,15 @@ async def run_simulation(request: SimulationRequest):
                 rms_timing_bias_ns=result["bias_analysis"]["rms_timing_bias_ns"],
                 satellite_biases=satellite_biases
             ),
-            computation_time_ms=result["computation_time_ms"]
+            computation_time_ms=result["computation_time_ms"],
+            algorithm_comparison=[
+                AlgorithmConvergence(
+                    algorithm=item["algorithm"],
+                    convergence_curve=item["convergence_curve"],
+                    final_sinr_db=item["final_sinr_db"]
+                )
+                for item in result["algorithm_comparison"]
+            ] if result.get("algorithm_comparison") else None
         )
         
         # 缓存结果
@@ -179,6 +189,12 @@ async def list_algorithms():
                 "name": "LCMV",
                 "full_name": "Linearly Constrained Minimum Variance",
                 "description": "线性约束最小方差，支持多约束条件"
+            },
+            {
+                "id": "rls",
+                "name": "RLS",
+                "full_name": "Recursive Least Squares",
+                "description": "递归最小二乘算法，比LMS收敛更快更稳定"
             }
         ]
     }

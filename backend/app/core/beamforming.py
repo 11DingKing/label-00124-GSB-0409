@@ -52,7 +52,7 @@ class AdaptiveBeamformer:
         self,
         array_signal: np.ndarray,
         signal_doa_deg: float,
-        algorithm: Literal["mvdr", "lms", "pi", "lcmv"] = "mvdr",
+        algorithm: Literal["mvdr", "lms", "pi", "lcmv", "rls"] = "mvdr",
         diagonal_loading: float = 0.01,
         lms_step_size: float = 0.01,
         reference_signal: Optional[np.ndarray] = None
@@ -79,6 +79,8 @@ class AdaptiveBeamformer:
             return self._power_inversion(array_signal, signal_doa_deg, diagonal_loading)
         elif algorithm == "lcmv":
             return self._lcmv(array_signal, signal_doa_deg, diagonal_loading)
+        elif algorithm == "rls":
+            return self._rls(array_signal, signal_doa_deg, reference_signal)
         else:
             raise ValueError(f"Unknown algorithm: {algorithm}")
     
@@ -288,6 +290,83 @@ class AdaptiveBeamformer:
             output_sinr_db=metrics["sinr_db"],
             jammer_suppression_db=metrics["jammer_suppression_db"],
             signal_distortion_db=metrics["signal_distortion_db"]
+        )
+    
+    def _rls(
+        self,
+        array_signal: np.ndarray,
+        signal_doa_deg: float,
+        reference_signal: Optional[np.ndarray],
+        forgetting_factor: float = 0.99,
+        delta: float = 0.01
+    ) -> BeamformingOutput:
+        """
+        RLS递归最小二乘算法
+        
+        更新规则:
+        K(n) = P(n-1)*x(n) / (λ + x^H(n)*P(n-1)*x(n))
+        P(n) = (P(n-1) - K(n)*x^H(n)*P(n-1)) / λ
+        w(n) = w(n-1) + K(n)*e*(n)
+        
+        其中:
+        - λ 为遗忘因子(默认值0.99)
+        - P(0) = δ^(-1)*I, δ默认值0.01
+        """
+        num_samples = array_signal.shape[1]
+        
+        # 初始权重 (指向期望方向)
+        a = self.array.steering_vector(signal_doa_deg)
+        weights = a.copy() / self.num_elements
+        
+        # 如果没有参考信号，使用导向矢量约束
+        if reference_signal is None:
+            reference_signal = np.ones(num_samples, dtype=np.complex128)
+            
+        # 初始化P矩阵 (初始相关矩阵逆)
+        P = np.eye(self.num_elements) / delta
+        
+        # 输出信号和收敛曲线
+        output_signal = np.zeros(num_samples, dtype=np.complex128)
+        convergence = np.zeros(num_samples)
+        
+        # RLS迭代
+        for n in range(num_samples):
+            x_n = array_signal[:, n:n+1]
+            
+            # 输出
+            y_n = (weights.conj().T @ x_n).item()
+            output_signal[n] = y_n
+            
+            # 误差
+            e_n = reference_signal[n] - y_n
+            convergence[n] = np.abs(e_n) ** 2
+            
+            # RLS更新
+            # K(n) = P(n-1)*x(n) / (λ + x^H(n)*P(n-1)*x(n))
+            denominator = forgetting_factor + (x_n.conj().T @ P @ x_n).item()
+            K_n = (P @ x_n) / denominator
+            
+            # P(n) = (P(n-1) - K(n)*x^H(n)*P(n-1)) / λ
+            P = (P - K_n @ x_n.conj().T @ P) / forgetting_factor
+            
+            # w(n) = w(n-1) + K(n)*e*(n)
+            weights = weights + K_n * np.conj(e_n)
+            
+            # 约束: 保持期望方向增益为1
+            constraint_error = 1.0 - (weights.conj().T @ a).item()
+            weights = weights + constraint_error * a / (a.conj().T @ a)
+            
+        # 计算最终协方差矩阵用于性能评估
+        R = self.array.compute_covariance(array_signal)
+        metrics = self._compute_metrics(weights, a, R, array_signal)
+        
+        return BeamformingOutput(
+            weights=weights.flatten(),
+            output_signal=output_signal,
+            output_sinr_db=metrics["sinr_db"],
+            jammer_suppression_db=metrics["jammer_suppression_db"],
+            signal_distortion_db=metrics["signal_distortion_db"],
+            convergence_curve=convergence
         )
     
     def _compute_metrics(

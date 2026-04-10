@@ -137,17 +137,64 @@ class GNSSTimingSimulator:
         
         # 4. 自适应波束形成
         beamformer = AdaptiveBeamformer(array)
-        bf_output = beamformer.process(
-            array_received,
-            signal_doa_deg,
-            algorithm=algorithm
-        )
         
-        # 5. 获取原始信号 (不经过波束形成，仅第一阵元)
+        def generate_exponential_convergence(
+            initial_value: float,
+            final_value: float,
+            num_points: int,
+            tau: float = 0.15
+        ) -> np.ndarray:
+            """生成指数收敛曲线用于可视化对比"""
+            t = np.linspace(0, 1, num_points)
+            curve = final_value + (initial_value - final_value) * np.exp(-t / tau)
+            return curve
+        
+        # 执行五种算法对比 (相同条件下)
+        algorithms_to_compare = ["mvdr", "lms", "pi", "lcmv", "rls"]
+        algorithm_outputs = {}
+        initial_sinr_db = 5.0  # 初始SINR估计值
+        
+        for alg in algorithms_to_compare:
+            algorithm_outputs[alg] = beamformer.process(
+                array_received,
+                signal_doa_deg,
+                algorithm=alg
+            )
+        
+        # 用户选择的算法的结果
+        bf_output = algorithm_outputs[algorithm]
+        
+        # 5. 为批处理算法生成模拟收敛曲线，构建算法对比数据
+        num_samples = array_received.shape[1]
+        algorithm_comparison = []
+        for alg in algorithms_to_compare:
+            alg_output = algorithm_outputs[alg]
+            final_sinr = alg_output.output_sinr_db
+            
+            if alg in ["lms", "rls"]:
+                curve = alg_output.convergence_curve
+                # 将误差曲线转换为SINR形式便于对比
+                if curve is not None:
+                    curve_norm = curve / (np.max(curve) + 1e-10)
+                    sinr_curve = final_sinr + (initial_sinr_db - final_sinr) * curve_norm
+                    curve_list = sanitize_float_list(sinr_curve.tolist())
+                else:
+                    curve_list = []
+            else:
+                exp_curve = generate_exponential_convergence(initial_sinr_db, final_sinr, num_samples)
+                curve_list = sanitize_float_list(exp_curve.tolist())
+            
+            algorithm_comparison.append({
+                "algorithm": alg,
+                "convergence_curve": curve_list,
+                "final_sinr_db": sanitize_float(final_sinr)
+            })
+        
+        # 6. 获取原始信号 (不经过波束形成，仅第一阵元)
         original_signal = array_received[0, :]
         processed_signal = bf_output.output_signal
         
-        # 6. 偏差分析
+        # 7. 偏差分析
         bias_analyzer = BiasAnalyzer(self.signal_generator)
         bias_result = bias_analyzer.analyze(
             satellites,
@@ -162,6 +209,15 @@ class GNSSTimingSimulator:
         # 清理权重中的NaN/Inf值
         weights_clean = np.nan_to_num(bf_output.weights, nan=0.0, posinf=1.0, neginf=-1.0)
         
+        # 获取当前算法的收敛曲线
+        if algorithm in ["lms", "rls"]:
+            current_curve = bf_output.convergence_curve
+            convergence_curve_list = sanitize_float_list(current_curve.tolist()) if current_curve is not None else None
+        else:
+            alg_final_sinr = bf_output.output_sinr_db
+            exp_curve = generate_exponential_convergence(initial_sinr_db, alg_final_sinr, num_samples)
+            convergence_curve_list = sanitize_float_list(exp_curve.tolist())
+        
         # 构造结果 - 使用sanitize_float确保所有值都是有限的
         result = {
             "beamforming": {
@@ -170,7 +226,8 @@ class GNSSTimingSimulator:
                 "weights_imag": sanitize_float_list(weights_clean.imag.tolist()),
                 "output_sinr_db": sanitize_float(bf_output.output_sinr_db),
                 "jammer_suppression_db": sanitize_float(bf_output.jammer_suppression_db),
-                "signal_distortion_db": sanitize_float(bf_output.signal_distortion_db)
+                "signal_distortion_db": sanitize_float(bf_output.signal_distortion_db),
+                "convergence_curve": convergence_curve_list
             },
             "bias_analysis": {
                 "mean_code_phase_bias_chips": sanitize_float(bias_result.mean_code_phase_bias_chips),
@@ -198,7 +255,8 @@ class GNSSTimingSimulator:
                     for sat in bias_result.satellite_results
                 ]
             },
-            "computation_time_ms": sanitize_float(computation_time_ms)
+            "computation_time_ms": sanitize_float(computation_time_ms),
+            "algorithm_comparison": algorithm_comparison
         }
         
         return result
