@@ -15,7 +15,8 @@ from ..models import (
     BiasResult,
     HealthResponse,
     SatelliteBias,
-    BeamformingResult
+    BeamformingResult,
+    AlgorithmComparisonResult
 )
 from ..core import GNSSTimingSimulator
 
@@ -64,6 +65,7 @@ async def run_simulation(request: SimulationRequest):
         - lms: 最小均方
         - pi: 功率反演
         - lcmv: 线性约束最小方差
+        - rls: 递归最小二乘
     """
     try:
         # 执行仿真
@@ -81,7 +83,7 @@ async def run_simulation(request: SimulationRequest):
         
         # 构造响应
         simulation_id = str(uuid.uuid4())
-        
+
         # 转换卫星偏差列表
         satellite_biases = [
             SatelliteBias(
@@ -95,7 +97,21 @@ async def run_simulation(request: SimulationRequest):
             )
             for sat in result["bias_analysis"]["satellite_biases"]
         ]
-        
+
+        # 转换算法对比结果
+        algorithm_comparison = None
+        if "algorithm_comparison" in result and result["algorithm_comparison"]:
+            algorithm_comparison = [
+                AlgorithmComparisonResult(
+                    algorithm=comp["algorithm"],
+                    output_sinr_db=comp["output_sinr_db"],
+                    jammer_suppression_db=comp["jammer_suppression_db"],
+                    signal_distortion_db=comp["signal_distortion_db"],
+                    convergence_curve=comp["convergence_curve"]
+                )
+                for comp in result["algorithm_comparison"]
+            ]
+
         response = SimulationResponse(
             simulation_id=simulation_id,
             timestamp=datetime.now(),
@@ -124,6 +140,7 @@ async def run_simulation(request: SimulationRequest):
                 rms_timing_bias_ns=result["bias_analysis"]["rms_timing_bias_ns"],
                 satellite_biases=satellite_biases
             ),
+            algorithm_comparison=algorithm_comparison,
             computation_time_ms=result["computation_time_ms"]
         )
         
@@ -179,6 +196,12 @@ async def list_algorithms():
                 "name": "LCMV",
                 "full_name": "Linearly Constrained Minimum Variance",
                 "description": "线性约束最小方差，支持多约束条件"
+            },
+            {
+                "id": "rls",
+                "name": "RLS",
+                "full_name": "Recursive Least Squares",
+                "description": "递归最小二乘算法，收敛速度快，跟踪性能好"
             }
         ]
     }

@@ -31,9 +31,9 @@ class SimulationRequest(BaseModel):
         le=60,
         description="干扰噪声比 (dB)"
     )
-    algorithm: Literal["mvdr", "lms", "pi", "lcmv"] = Field(
+    algorithm: Literal["mvdr", "lms", "pi", "lcmv", "rls"] = Field(
         default="mvdr",
-        description="抗干扰算法: mvdr, lms, pi, lcmv"
+        description="抗干扰算法: mvdr, lms, pi, lcmv, rls"
     )
     snr_db: float = Field(
         default=45.0,
@@ -100,7 +100,7 @@ class BiasResult(BaseModel):
 
 class BeamformingResult(BaseModel):
     """波束形成结果"""
-    
+
     algorithm: str = Field(description="使用的算法")
     weights_real: List[float] = Field(description="波束权重实部")
     weights_imag: List[float] = Field(description="波束权重虚部")
@@ -109,9 +109,19 @@ class BeamformingResult(BaseModel):
     signal_distortion_db: float = Field(description="信号失真 (dB)")
 
 
+class AlgorithmComparisonResult(BaseModel):
+    """算法对比结果"""
+
+    algorithm: str = Field(description="算法名称")
+    output_sinr_db: float = Field(description="输出信干噪比 (dB)")
+    jammer_suppression_db: float = Field(description="干扰抑制量 (dB)")
+    signal_distortion_db: float = Field(description="信号失真 (dB)")
+    convergence_curve: List[float] = Field(description="收敛曲线数据")
+
+
 class SimulationResponse(BaseModel):
     """仿真响应结果"""
-    
+
     simulation_id: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
         description="仿真任务ID"
@@ -121,16 +131,22 @@ class SimulationResponse(BaseModel):
         description="仿真时间戳"
     )
     status: str = Field(default="completed", description="仿真状态")
-    
+
     # 输入参数回显
     parameters: SimulationRequest = Field(description="仿真输入参数")
-    
+
     # 波束形成结果
     beamforming: BeamformingResult = Field(description="波束形成结果")
-    
+
     # 偏差分析结果
     bias_analysis: BiasResult = Field(description="偏差分析结果")
-    
+
+    # 算法对比结果
+    algorithm_comparison: Optional[List[AlgorithmComparisonResult]] = Field(
+        default=None,
+        description="五种算法对比数据，包含收敛曲线"
+    )
+
     # 性能指标
     computation_time_ms: float = Field(description="计算耗时 (毫秒)")
 

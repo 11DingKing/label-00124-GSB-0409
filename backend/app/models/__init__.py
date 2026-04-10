@@ -5,6 +5,7 @@ from .schemas import (
     HealthResponse,
     SatelliteBias,
     BeamformingResult,
+    AlgorithmComparisonResult,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "HealthResponse",
     "SatelliteBias",
     "BeamformingResult",
+    "AlgorithmComparisonResult",
 ]
