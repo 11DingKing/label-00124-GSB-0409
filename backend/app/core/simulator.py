@@ -36,6 +36,80 @@ def sanitize_float_list(values: List[float], default: float = 0.0) -> List[float
     return [sanitize_float(v, default) for v in values]
 
 
+def generate_exponential_convergence(
+    initial_value: float,
+    final_value: float,
+    num_samples: int,
+    time_constant: float = 0.15
+) -> np.ndarray:
+    """
+    生成指数收敛曲线
+    
+    用于批处理算法的模拟收敛曲线：从初始SINR指数收敛到最终SINR
+    
+    curve(n) = final_value + (initial_value - final_value) * exp(-n / (time_constant * num_samples))
+    
+    Args:
+        initial_value: 初始值
+        final_value: 最终收敛值
+        num_samples: 采样点数
+        time_constant: 时间常数，控制收敛速度(0-1)
+        
+    Returns:
+        收敛曲线数组
+    """
+    n = np.arange(num_samples)
+    tau = time_constant * num_samples  # 使 time_constant 比例因子更直观
+    convergence = final_value + (initial_value - final_value) * np.exp(-n / tau)
+    return convergence
+
+
+def generate_sinr_from_error(
+    error_curve: np.ndarray,
+    initial_sinr: float,
+    final_sinr: float
+) -> List[float]:
+    """
+    将自适应算法的误差曲线转换为 SINR 收敛曲线
+    
+    用于 LMS/RLS 等输出误差平方的自适应算法，使对比更有意义
+    
+    Args:
+        error_curve: 原始误差平方曲线
+        initial_sinr: 初始 SINR 值
+        final_sinr: 最终 SINR 值
+        
+    Returns:
+        SINR 收敛曲线
+    """
+    num_samples = len(error_curve)
+    
+    # 平滑误差曲线以减少噪声
+    window_size = max(5, num_samples // 50)
+    if window_size > 1:
+        smoothed_error = np.convolve(
+            error_curve, 
+            np.ones(window_size) / window_size, 
+            mode="same"
+        )
+    else:
+        smoothed_error = error_curve
+    
+    # 归一化平滑后的误差曲线 (反转，因为误差越小，SINR越高)
+    max_error = np.max(smoothed_error)
+    min_error = np.min(smoothed_error)
+    
+    if max_error > min_error:
+        normalized_error = (smoothed_error - min_error) / (max_error - min_error)
+        # 反转并映射到 SINR 范围：误差 = 1 -> SINR = initial，误差 = 0 -> SINR = final
+        sinr_curve = final_sinr + (initial_sinr - final_sinr) * normalized_error
+    else:
+        # 误差不变，生成简单的指数曲线
+        sinr_curve = generate_exponential_convergence(initial_sinr, final_sinr, num_samples)
+    
+    return sinr_curve.tolist()
+
+
 class GNSSTimingSimulator:
     """
     GNSS授时仿真器
@@ -135,13 +209,89 @@ class GNSSTimingSimulator:
         noise_power = reference_power / (10 ** (snr_db / 10)) * 0.1
         array_received = array.receive_signal(signals_with_doa, noise_power)
         
-        # 4. 自适应波束形成
+        # 4. 自适应波束形成 - 用户选择的算法
         beamformer = AdaptiveBeamformer(array)
         bf_output = beamformer.process(
             array_received,
             signal_doa_deg,
             algorithm=algorithm
         )
+        
+        # 4b. 运行所有五种算法用于对比 - 生成 algorithm_comparison 数据
+        all_algorithms = ["mvdr", "lms", "pi", "lcmv", "rls"]
+        batch_algorithms = ["mvdr", "pi", "lcmv"]
+        
+        algorithm_comparison = []
+        for algo in all_algorithms:
+            algo_output = beamformer.process(
+                array_received,
+                signal_doa_deg,
+                algorithm=algo
+            )
+            
+            # 获取或生成收敛曲线
+            if algo in batch_algorithms:
+                # 批处理算法没有逐样本收敛曲线
+                # 模拟生成一条从初始 SINR 到最终 SINR 的指数收敛曲线
+                num_samples = array_received.shape[1]
+                
+                # 计算初始 SINR：使用初始权重（仅指向期望方向）
+                initial_a = array.steering_vector(signal_doa_deg)
+                initial_weights = initial_a.copy() / array_elements
+                initial_R = array.compute_covariance(array_received)
+                initial_metrics = beamformer._compute_metrics(
+                    initial_weights, initial_a, initial_R, array_received
+                )
+                initial_sinr = initial_metrics["sinr_db"]
+                final_sinr = algo_output.output_sinr_db
+                
+                # 生成指数收敛曲线：从初始值收敛到最终值
+                convergence_curve = generate_exponential_convergence(
+                    initial_sinr, final_sinr, num_samples
+                )
+            else:
+                # 自适应算法 (LMS, RLS) 有真实收敛曲线
+                if algo_output.convergence_curve is not None:
+                    # 我们需要将误差曲线转换为 SINR 曲线以便对比
+                    # 使用归一化误差曲线映射到 SINR 范围
+                    error_curve = algo_output.convergence_curve
+                    num_samples = len(error_curve)
+                    
+                    # 计算初始 SINR
+                    initial_a = array.steering_vector(signal_doa_deg)
+                    initial_weights = initial_a.copy() / array_elements
+                    initial_R = array.compute_covariance(array_received)
+                    initial_metrics = beamformer._compute_metrics(
+                        initial_weights, initial_a, initial_R, array_received
+                    )
+                    initial_sinr = initial_metrics["sinr_db"]
+                    final_sinr = algo_output.output_sinr_db
+                    
+                    # 基于误差曲线生成 SINR 收敛曲线
+                    convergence_curve = generate_sinr_from_error(
+                        error_curve, initial_sinr, final_sinr
+                    )
+                else:
+                    # Fallback: 生成模拟曲线
+                    initial_a = array.steering_vector(signal_doa_deg)
+                    initial_weights = initial_a.copy() / array_elements
+                    initial_R = array.compute_covariance(array_received)
+                    initial_metrics = beamformer._compute_metrics(
+                        initial_weights, initial_a, initial_R, array_received
+                    )
+                    initial_sinr = initial_metrics["sinr_db"]
+                    final_sinr = algo_output.output_sinr_db
+                    convergence_curve = generate_exponential_convergence(
+                        initial_sinr, final_sinr, array_received.shape[1]
+                    )
+            
+            algorithm_comparison.append({
+                "algorithm": algo,
+                "output_sinr_db": sanitize_float(algo_output.output_sinr_db),
+                "convergence_curve": sanitize_float_list(convergence_curve.tolist() 
+                    if isinstance(convergence_curve, np.ndarray) 
+                    else convergence_curve)
+            })
         
         # 5. 获取原始信号 (不经过波束形成，仅第一阵元)
         original_signal = array_received[0, :]
@@ -198,6 +348,7 @@ class GNSSTimingSimulator:
                     for sat in bias_result.satellite_results
                 ]
             },
+            "algorithm_comparison": algorithm_comparison,
             "computation_time_ms": sanitize_float(computation_time_ms)
         }
         
